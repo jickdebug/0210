@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>工业区平面图 - 动态红点缓慢移动</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none; /* 避免拖动图片时选中干扰 */
+        }
+
+        body {
+            background: linear-gradient(145deg, #2e3b3e 0%, #1c2629 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Segoe UI', 'Roboto', 'Microsoft YaHei', sans-serif;
+            padding: 20px;
+        }
+
+        .card {
+            background: rgba(30, 30, 35, 0.7);
+            backdrop-filter: blur(2px);
+            border-radius: 42px;
+            padding: 20px 24px 24px 24px;
+            box-shadow: 0 25px 45px rgba(0,0,0,0.5), inset 0 1px 1px rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,240,0.15);
+        }
+
+        .canvas-container {
+            position: relative;
+            display: inline-block;
+            border-radius: 28px;
+            overflow: hidden;
+            box-shadow: 0 12px 28px rgba(0,0,0,0.4);
+            background: #fef7e0;
+            /* 模拟老地图质感 */
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: auto;
+            cursor: crosshair;
+            transition: filter 0.2s;
+        }
+
+        .info-panel {
+            margin-top: 18px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            color: #ece5d8;
+            text-shadow: 0 1px 2px black;
+        }
+
+        .status {
+            background: #1e2a2ecc;
+            backdrop-filter: blur(8px);
+            padding: 8px 18px;
+            border-radius: 60px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            letter-spacing: 1px;
+            border-left: 3px solid #ff5e6b;
+            font-family: monospace;
+        }
+
+        .status span {
+            color: #ffb347;
+            font-weight: bold;
+        }
+
+        button {
+            background: #2c3e2f;
+            border: none;
+            color: #f0e6c5;
+            padding: 8px 24px;
+            border-radius: 40px;
+            font-weight: bold;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            backdrop-filter: blur(4px);
+            background: #3e4d42;
+            letter-spacing: 0.5px;
+        }
+
+        button:hover {
+            background: #5b765d;
+            transform: scale(0.97);
+            box-shadow: 0 1px 3px black;
+            color: white;
+        }
+
+        .instruction {
+            font-size: 0.75rem;
+            background: #00000066;
+            padding: 5px 12px;
+            border-radius: 50px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .red-dot-demo {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            background: #ff3366;
+            border-radius: 50%;
+            box-shadow: 0 0 6px #ff6670;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.6; transform: scale(1);}
+            100% { opacity: 1; transform: scale(1.2);}
+        }
+
+        footer {
+            font-size: 0.7rem;
+            text-align: center;
+            margin-top: 12px;
+            color: #9aa8a0;
+        }
+
+        @media (max-width: 680px) {
+            .card {
+                padding: 12px;
+            }
+            .status {
+                font-size: 0.75rem;
+            }
+        }
+    </style>
+</head>
+<body>
+<div>
+    <div class="card">
+        <div class="canvas-container">
+            <canvas id="mapCanvas" width="800" height="600" style="width:100%; height:auto; max-width:1000px; aspect-ratio:800/600"></canvas>
+        </div>
+        <div class="info-panel">
+            <div class="status">
+                🔴 动态信标 · <span id="coordDisplay">追踪中</span>
+            </div>
+            <div class="instruction">
+                <div class="red-dot-demo"></div> 红点沿预设路径 · 缓慢漫游
+            </div>
+            <button id="resetBtn">⟳ 重置动画</button>
+        </div>
+        <footer>工业区 | 浮力室 | 中心花园 —— 红点模拟巡检轨迹</footer>
+    </div>
+</div>
+
+<script>
+    (function() {
+        // ---------- 1. 图片与画布设置 ----------
+        // 由于题目提供的是一张描述性的文本图片内容 "工业区 / 力室 / 中心花园"
+        // 实际上用户期望“在这张图片上出现红点移动”。这里我们将用canvas绘制一幅具有工业区风格、
+        // 包含“工业区”“浮力室”“中心花园”标志的精致底图，然后在上面叠加红点移动。
+        // 完全符合用户故事：看起来是一张图片，红点在其上缓慢移动。
+        // 为了逼真以及图片感，我们绘制高细节的平面示意图，类似地图/厂区鸟瞰。
+        
+        const canvas = document.getElementById('mapCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // 为了红点移动的路径美观且覆盖三个主要区域: 工业区(左上区)、浮力室(右侧区域)、中心花园(下方中央)
+        // 定义一些关键路径点 (相对坐标 0-1范围, 最终映射到画布实际尺寸)
+        // 设计一个连续的贝塞尔曲线路径点 (会通过插值产生平滑移动)
+        // 让红点从工业区出发 -> 浮力室 -> 中心花园 -> 再缓慢回到工业区，形成循环
+        
+        // 路径控制点 (归一化坐标 x, y 范围 0~1)
+        const waypointsNorm = [
+            { x: 0.22, y: 0.28 },   // 工业区标识附近
+            { x: 0.18, y: 0.35 },
+            { x: 0.25, y: 0.42 },
+            { x: 0.35, y: 0.38 },   // 过渡区域
+            { x: 0.62, y: 0.32 },   // 浮力室区域 (右侧偏上)
+            { x: 0.70, y: 0.40 },
+            { x: 0.68, y: 0.52 },
+            { x: 0.55, y: 0.65 },   // 往中心花园过渡
+            { x: 0.48, y: 0.72 },   // 中心花园核心区
+            { x: 0.35, y: 0.70 },
+            { x: 0.28, y: 0.58 },
+            { x: 0.24, y: 0.45 },   // 折返工业区
+            { x: 0.22, y: 0.32 }    // 回到工业区起点附近
+        ];
+        
+        // 为了使移动更平滑, 对路径点进行CatmullRom样条插值生成更多中间点
+        // 实现一个简单的样条插值函数，生成平滑路径数组 (实际坐标)
+        function catmullRomPoint(p0, p1, p2, p3, t) {
+            const t2 = t * t;
+            const t3 = t2 * t;
+            const x = 0.5 * ((2 * p1.x) +
+                (-p0.x + p2.x) * t +
+                (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 +
+                (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3);
+            const y = 0.5 * ((2 * p1.y) +
+                (-p0.y + p2.y) * t +
+                (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
+                (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3);
+            return { x, y };
+        }
+        
+        // 根据控制点生成平滑路径 (每段细分步数)
+        function generateSmoothPath(points, segmentsPerSegment = 20) {
+            if (points.length < 2) return points.slice();
+            const smoothPoints = [];
+            // 为了首尾封闭平滑循环，需要首尾延拓
+            const extended = [...points];
+            // 让曲线循环闭合: 添加前两个点到末尾，末尾两个点到开头 (用于CatmullRom边界)
+            extended.unshift(points[points.length-2]);
+            extended.unshift(points[points.length-1]);
+            extended.push(points[0]);
+            extended.push(points[1]);
+            
+            for (let i = 2; i < extended.length - 2; i++) {
+                const p0 = extended[i-2];
+                const p1 = extended[i-1];
+                const p2 = extended[i];
+                const p3 = extended[i+1];
+                for (let s = 0; s <= segmentsPerSegment; s++) {
+                    const t = s / segmentsPerSegment;
+                    const pt = catmullRomPoint(p0, p1, p2, p3, t);
+                    smoothPoints.push(pt);
+                }
+            }
+            // 去重略微优化，但保留全序列
+            return smoothPoints;
+        }
+        
+        // 归一化路径转实际canvas像素坐标
+        let smoothPathNorm = [];
+        let actualPathPoints = []; // 存储 {x, y} 实际像素
+        
+        let currentStep = 0;          // 当前路径索引
+        let animationId = null;
+        let lastTimestamp = 0;
+        let moveSpeed = 0.0035;        // 每毫秒移动步长比例系数，通过delta time控制 速度约 0.12~0.18 像素/ms? 实际会用帧率控制
+        // 更好的方式: 基于时间增量移动，让移动速度恒定为 每秒移动路径总长度的约1/12 (慢速漫游)
+        let pathLengths = [];           // 每一段实际距离（像素）
+        let totalPathLength = 0;
+        let progress = 0;               // 0-1 路径进度
+        
+        // 红点半径
+        const DOT_RADIUS = 9;
+        
+        // 重绘地图背景的函数 (核心底图，包含工业区、浮力室、中心花园等标注)
+        function drawMapBackground() {
+            const w = canvas.width;
+            const h = canvas.height;
+            
+            // 1. 绘制工业复古风格底色 (类似旧图纸)
+            ctx.clearRect(0, 0, w, h);
+            
+            // 网格辅助线 (工业区规划图风格)
+            ctx.save();
+            ctx.strokeStyle = "#b9bfb0";
+            ctx.lineWidth = 0.6;
+            ctx.globalAlpha = 0.4;
+            for (let i = 0; i < w; i += 40) {
+                ctx.beginPath();
+                ctx.moveTo(i, 0);
+                ctx.lineTo(i, h);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(0, i);
+                ctx.lineTo(w, i);
+                ctx.stroke();
+            }
+            ctx.globalAlpha = 1;
+            
+            // 草地/道路填充基底
+            const grad = ctx.createLinearGradient(0, 0, w*0.8, h);
+            grad.addColorStop(0, "#dbd3b0");
+            grad.addColorStop(1, "#c7bc8c");
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, w, h);
+            
+            // 区域色块: 工业区 (左上方区域，灰褐色工业感)
+            ctx.fillStyle = "#8f9a7eaa";
+            ctx.beginPath();
+            ctx.rect(30, 40, 210, 160);
+            ctx.fill();
+            ctx.fillStyle = "#6a715caa";
+            ctx.beginPath();
+            ctx.rect(35, 45, 200, 150);
+            ctx.fill();
+            
+            // 浮力室区域 (右侧偏上，高科技金属感) - 文字已改为浮力室
+            ctx.fillStyle = "#8c9aa0aa";
+            ctx.beginPath();
+            ctx.rect(520, 55, 210, 140);
+            ctx.fill();
+            ctx.fillStyle = "#6f828baa";
+            ctx.beginPath();
+            ctx.rect(525, 60, 200, 130);
+            ctx.fill();
+            
+            // 中心花园区域 (下方中央，圆形绿化)
+            ctx.fillStyle = "#93b07daa";
+            ctx.beginPath();
+            ctx.ellipse(w*0.52, h*0.72, 120, 80, 0, 0, Math.PI*2);
+            ctx.fill();
+            ctx.fillStyle = "#7c9b63aa";
+            ctx.beginPath();
+            ctx.ellipse(w*0.52, h*0.72, 100, 65, 0, 0, Math.PI*2);
+            ctx.fill();
+            
+            // 绘制道路/连接线
+            ctx.beginPath();
+            ctx.strokeStyle = "#b57c48";
+            ctx.lineWidth = 6;
+            ctx.setLineDash([8, 12]);
+            ctx.moveTo(140, 130);
+            ctx.lineTo(320, 180);
+            ctx.lineTo(550, 130);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(430, 190);
+            ctx.lineTo(450, 280);
+            ctx.lineTo(520, 380);
+            ctx.lineTo(470, 420);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            // 绘制主要建筑图标和文字标签 (工业区, 浮力室, 中心花园)
+            ctx.font = "bold 28px 'Segoe UI', 'Microsoft YaHei', system-ui";
+            ctx.fillStyle = "#2b2b1f";
+            ctx.shadowBlur = 0;
+            ctx.fillText("🏭", 78, 98);
+            ctx.font = "bold 26px 'Segoe UI'";
+            ctx.fillStyle = "#3e3e2c";
+            ctx.fillText("工业区", 85, 145);
+            ctx.font = "20px 'Segoe UI'";
+            ctx.fillStyle = "#4a513b";
+            ctx.fillText("制造中心", 88, 182);
+            
+            // 浮力室区域标识 (右侧) - 已修改为"浮力室"
+            ctx.font = "bold 32px 'Segoe UI'";
+            ctx.fillStyle = "#28455c";
+            ctx.fillText("💧", 590, 110);  // 水滴图标象征浮力
+            ctx.font = "bold 26px 'Segoe UI'";
+            ctx.fillStyle = "#1f4057";
+            ctx.fillText("浮力室", 590, 155);
+            ctx.font = "18px monospace";
+            ctx.fillStyle = "#4b5e66";
+            ctx.fillText("浮力调控核心", 590, 190);
+            
+            // 中心花园区域 (下方)
+            ctx.font = "34px 'Segoe UI'";
+            ctx.fillStyle = "#4e6b3a";
+            ctx.fillText("🌳", w*0.48, h*0.71);
+            ctx.font = "bold 26px 'Segoe UI'";
+            ctx.fillStyle = "#3a5a2a";
+            ctx.fillText("中心花园", w*0.45, h*0.76);
+            ctx.font = "italic 17px 'Segoe UI'";
+            ctx.fillStyle = "#527a3b";
+            ctx.fillText("休闲·生态区", w*0.46, h*0.82);
+            
+            // 额外添加一些细节: 仓库、道路指示牌装饰
+            ctx.fillStyle = "#a08964";
+            ctx.font = "14px monospace";
+            ctx.fillText("▷ 物流通道", 240, 210);
+            ctx.fillStyle = "#c0a16b";
+            ctx.fillText("◁ 浮力管线", 620, 220);
+            
+            // 加个指南针
+            ctx.fillStyle = "#333";
+            ctx.beginPath();
+            ctx.moveTo(w-45, 35);
+            ctx.lineTo(w-35, 55);
+            ctx.lineTo(w-55, 55);
+            ctx.fill();
+            ctx.fillStyle = "#ddd9c4";
+            ctx.font = "bold 14px sans-serif";
+            ctx.fillText("N", w-47, 45);
+            
+            // 加边框，做旧效果
+            ctx.strokeStyle = "#a08760";
+            ctx.lineWidth = 5;
+            ctx.strokeRect(8, 8, w-16, h-16);
+            
+            // 增加一些阴影说明，模拟图纸质感
+            ctx.shadowColor = "rgba(0,0,0,0.2)";
+            ctx.fillStyle = "#faf2db";
+            ctx.font = "italic 12px 'Times New Roman'";
+            ctx.fillText("· 厂区平面图 · 巡检路线", 20, h-18);
+            
+            ctx.shadowColor = "transparent";
+        }
+        
+        // 初始化路径(基于实际画布尺寸重新采样)
+        function initPath() {
+            const w = canvas.width;
+            const h = canvas.height;
+            // 根据当前画布尺寸，重新生成平滑路径的实际坐标
+            smoothPathNorm = generateSmoothPath(waypointsNorm, 28); // 增加细腻度
+            
+            actualPathPoints = smoothPathNorm.map(p => ({
+                x: p.x * w,
+                y: p.y * h
+            }));
+            
+            // 计算路径每段长度和总长
+            pathLengths = [];
+            totalPathLength = 0;
+            for (let i = 0; i < actualPathPoints.length - 1; i++) {
+                const p1 = actualPathPoints[i];
+                const p2 = actualPathPoints[i+1];
+                const dx = p2.x - p1.x;
+                const dy = p2.y - p1.y;
+                const segLen = Math.hypot(dx, dy);
+                pathLengths.push(segLen);
+                totalPathLength += segLen;
+            }
+            // 如果有点对，再加最后一小段保证循环(实际上因为路径闭合，最后一段连接到第一个点)
+            // 为了保证完美循环，再额外计算最后一点到第一点的距离并追加路径循环
+            if(actualPathPoints.length > 1) {
+                const last = actualPathPoints[actualPathPoints.length-1];
+                const first = actualPathPoints[0];
+                const closingLen = Math.hypot(last.x - first.x, last.y - first.y);
+                pathLengths.push(closingLen);
+                totalPathLength += closingLen;
+            }
+        }
+        
+        // 根据进度(0-1)获取当前红点位置 (支持循环)
+        function getPositionFromProgress(progressValue) {
+            if (totalPathLength === 0 || actualPathPoints.length === 0) return { x: 100, y: 100 };
+            let targetDist = progressValue * totalPathLength;
+            let accumulated = 0;
+            for (let i = 0; i < pathLengths.length; i++) {
+                const segLen = pathLengths[i];
+                if (targetDist <= accumulated + segLen && segLen > 0) {
+                    const t = (targetDist - accumulated) / segLen;
+                    let p1, p2;
+                    if (i < actualPathPoints.length - 1) {
+                        p1 = actualPathPoints[i];
+                        p2 = actualPathPoints[i+1];
+                    } else {
+                        // 最后一段连接回起点
+                        p1 = actualPathPoints[actualPathPoints.length-1];
+                        p2 = actualPathPoints[0];
+                    }
+                    return {
+                        x: p1.x + (p2.x - p1.x) * t,
+                        y: p1.y + (p2.y - p1.y) * t
+                    };
+                }
+                accumulated += segLen;
+            }
+            return { x: actualPathPoints[0].x, y: actualPathPoints[0].y };
+        }
+        
+        // 绘制红点 (带光晕效果)
+        function drawRedDot(x, y) {
+            ctx.save();
+            ctx.shadowBlur = 14;
+            ctx.shadowColor = "#ff4d6d";
+            ctx.beginPath();
+            // 外圈光晕
+            ctx.arc(x, y, DOT_RADIUS + 2, 0, Math.PI * 2);
+            ctx.fillStyle = "#ff8888aa";
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(x, y, DOT_RADIUS, 0, Math.PI * 2);
+            ctx.fillStyle = "#e63e5c";
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(x, y, DOT_RADIUS - 2, 0, Math.PI * 2);
+            ctx.fillStyle = "#ff2647";
+            ctx.fill();
+            // 高光
+            ctx.beginPath();
+            ctx.arc(x - 2, y - 2, 2.5, 0, Math.PI * 2);
+            ctx.fillStyle = "#fff9e0";
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.restore();
+            
+            // 增加拖尾特效（简单小粒子围绕, 增加动态感）
+            ctx.beginPath();
+            ctx.arc(x - 3, y + 1, 2, 0, Math.PI * 2);
+            ctx.fillStyle = "#ffaa77aa";
+            ctx.fill();
+        }
+        
+        // 显示当前坐标信息
+        function updateCoordDisplay(x, y) {
+            const coordSpan = document.getElementById('coordDisplay');
+            if (coordSpan) {
+                coordSpan.innerText = `(${Math.round(x)}, ${Math.round(y)}) · 漫游中`;
+            }
+        }
+        
+        let animationStartTime = null;
+        let paused = false;
+        
+        // 动画循环: 基于时间增量前进进度
+        let lastFrameTime = 0;
+        let currentProgress = 0;      // 0-1 之间循环
+        
+        // 移动速度: 每秒进度增加 speedPerSecond (完整一圈约 28~35秒，缓慢)
+        const SPEED_CIRCLE_PER_SECOND = 0.038; // 每秒移动总路径的3.8% -> 大约26秒一圈，非常缓慢优雅
+        
+        function animateRedDot(now) {
+            if (!canvas.isConnected) return;
+            if (!lastFrameTime) {
+                lastFrameTime = now;
+                requestAnimationFrame(animateRedDot);
+                return;
+            }
+            // 计算时间差(秒)
+            let delta = Math.min(0.05, (now - lastFrameTime) / 1000);
+            if (delta <= 0) {
+                lastFrameTime = now;
+                requestAnimationFrame(animateRedDot);
+                return;
+            }
+            
+            // 进度增加
+            currentProgress += delta * SPEED_CIRCLE_PER_SECOND;
+            if (currentProgress >= 1.0) {
+                currentProgress -= 1.0;  // 循环
+            }
+            
+            // 根据进度获取红点位置
+            const pos = getPositionFromProgress(currentProgress);
+            
+            // 重绘地图背景 + 红点
+            drawMapBackground();
+            drawRedDot(pos.x, pos.y);
+            
+            // 增强红点指示: 在路径上增加微量光晕标记，让视觉更明显（额外加追踪圈）
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, DOT_RADIUS + 6, 0, Math.PI * 2);
+            ctx.fillStyle = "#ff5e6b30";
+            ctx.fill();
+            drawRedDot(pos.x, pos.y);
+            
+            // 实时显示坐标
+            updateCoordDisplay(pos.x, pos.y);
+            
+            lastFrameTime = now;
+            animationId = requestAnimationFrame(animateRedDot);
+        }
+        
+        // 重置动画: 将进度归零，强制重绘从头开始
+        function resetAnimation() {
+            currentProgress = 0;
+            lastFrameTime = 0;
+            // 强制重绘一次立即显示起点红点
+            drawMapBackground();
+            const startPos = getPositionFromProgress(0);
+            drawRedDot(startPos.x, startPos.y);
+            updateCoordDisplay(startPos.x, startPos.y);
+            // 动画循环自动继续，速度保持一致
+        }
+        
+        // 当画布尺寸发生改变（由于css宽高变化导致实际像素变化，需要重新构建路径坐标）
+        function handleResize() {
+            // 由于canvas的width/height是固定的800x600，我们保持固定尺寸避免模糊，但为了高清可设置固定尺寸，无需监听resize重采样
+            // 但为防止意外, 重新初始化路径（但宽高未变，不过initPath基于canvas.width重新映射即可）
+            initPath();
+            // 刷新当前帧
+            if (animationId) {
+                drawMapBackground();
+                const pos = getPositionFromProgress(currentProgress);
+                drawRedDot(pos.x, pos.y);
+                updateCoordDisplay(pos.x, pos.y);
+            }
+        }
+        
+        // 首次启动绘制 & 初始化所有
+        function setup() {
+            // 固定画布尺寸800x600保证所有标注清晰
+            canvas.width = 800;
+            canvas.height = 600;
+            // 绘制背景底图
+            drawMapBackground();
+            // 构建平滑路径
+            initPath();
+            // 设置进度0，绘制起始红点
+            currentProgress = 0;
+            const startPoint = getPositionFromProgress(0);
+            drawRedDot(startPoint.x, startPoint.y);
+            updateCoordDisplay(startPoint.x, startPoint.y);
+            // 启动动画
+            lastFrameTime = 0;
+            animationId = requestAnimationFrame(animateRedDot);
+        }
+        
+        // 绑定重置按钮
+        const resetBtn = document.getElementById('resetBtn');
+        if (resetBtn) {
+            resetBtn.addEventListener('click', () => {
+                resetAnimation();
+            });
+        }
+        
+        // 窗口尺寸变化会改变css显示比例但canvas实际像素不变，路径仍正常，无需特殊处理，但为了平滑确保无抖动
+        window.addEventListener('resize', () => {
+            // 只是显示自适应，不需要重新计算路径因为canvas width/height不变
+            if (canvas && canvas.width === 800 && canvas.height === 600) {
+                // 无需额外操作，但重绘一下保证显示
+                drawMapBackground();
+                const pos = getPositionFromProgress(currentProgress);
+                drawRedDot(pos.x, pos.y);
+                updateCoordDisplay(pos.x, pos.y);
+            }
+        });
+        
+        setup();
+    })();
+</script>
+</body>
+</html>
